@@ -1,5 +1,7 @@
+import Queue
 import socket
 import sys
+import threading
 
 
 class DeviceMappingRelay:
@@ -26,11 +28,72 @@ class DeviceMappingRelay:
             self.connected_receivers[host][port].remove(self.connected_receivers[receiver_index])
 
 
+class RelaySender(threading.Thread):
+    def __init__(self, sending_queue):
+        threading.Thread.__init__(self)
+        self.sending_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sending_queue = sending_queue
+        self.continue_running = False
+
+    def run(self):
+        self.continue_running = True
+        while self.continue_running:
+            if self.sending_queue.qsize() > 0:
+                item = self.sending_queue.get()
+                self.sending_socket.connect(item[0])
+                self.sending_socket.send(item[1])
+                self.sending_socket.close()
+
+
+# Receives packets for the relay device and places in queue
+class RelayReceiver(threading.Thread):
+    def __init__(self, ip, port, receive_queue):
+        threading.Thread.__init__(self)
+        self.receive_queue = receive_queue
+        self.receive_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.receive_socket.bind((ip, port))
+        self.continue_running = False
+
+    def run(self):
+        self.continue_running = True
+
+        while self.continue_running:
+            pass
+
+
+class Relay:
+    def __init__(self, ip, port):
+        self.mapping = DeviceMappingRelay()
+        self.receive_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        self.send_queue = Queue.Queue()
+        self.sender = RelaySender(self.send_queue)
+        self.receive_queue = Queue.Queue()
+        self.receiver = RelayReceiver(ip, port, self.receive_queue)
+
+        self.sender.run()
+        self.receiver.run()
+
+        self.continue_running = False
+
+    def run(self):
+        self.continue_running = True
+
+        while self.continue_running:
+            if self.receive_queue.qsize() > 0:
+                # Interpret the message sent
+                pass
+            else:
+                threading._sleep(.2) # Sleep for .2 seconds if no activity
+
+            pass
+
+
 class Receiver:
     def __init__(self, ip, port):
         self.receive_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.continue_listening = False
-        self.mapping = [] # Holds the current list of connected devices
 
         self.ip = ip
         self.port = port
@@ -69,14 +132,6 @@ class Transmitter:
         print "\tTransmit File: [filename]"
 
 
-class Relay():
-    def __init__(self):
-        pass
-
-    def run(self):
-        pass
-
-
 def print_help_menu():
     print "Help Menu"
     print "\t--receive [host] [port]"
@@ -94,12 +149,18 @@ if __name__ == '__main__':
             receive.run()
 
     elif sys.argv[1] == "--transmit":
-        transmit = Transmitter()
-        transmit.run()
+        if len(sys.argv) < 4:
+            print_help_menu()
+        else:
+            transmit = Transmitter()
+            transmit.run()
 
     elif sys.argv[1] == "--relay":
-        relay = Relay()
-        relay.run()
+        if len(sys.argv) < 4:
+            print_help_menu()
+        else:
+            relay = Relay(sys.argv[2], int(sys.argv[3]))
+            relay.run()
 
     else:
         print_help_menu()
