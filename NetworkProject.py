@@ -24,10 +24,10 @@ class DeviceMappingRelay:
     def add_receiver(self, ip, port):
         ind = self.get_receiver_index(ip, port)
         if ind == -1:
-            return False
-        else:
             self.connected_receivers.append((ip, port))
             return True
+        else:
+            return False
 
     def remove_receiver(self, ip, port):
         ind = self.get_receiver_index(ip, port)
@@ -56,54 +56,42 @@ class DeviceMappingRelay:
             return -1
 
     def __str__(self):
-        string = ""
-        for i in self.connected_receivers:
-            string += str(i) + "\n"
-        return "Current receivers subscribed: " + "\n" + string
-
-
-class RelaySender(threading.Thread):
-    def __init__(self, sending_queue):
-        threading.Thread.__init__(self)
-        self.sending_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sending_queue = sending_queue
-        self.continue_running = False
-
-    def run(self):
-        self.continue_running = True
-        while self.continue_running:
-            if self.sending_queue.qsize() > 0:
-                item = self.sending_queue.get()
-                self.sending_socket.connect(item[0])
-                self.sending_socket.send(item[1])
-                self.sending_socket.close()
+        if len(self.connected_receivers) == 0:
+            return "Current receivers subscribed: None"
+        else:
+            string = "Current receivers subscribed...:"
+            for i in range(0, len(self.connected_receivers)):
+                string += str(i) + "\r\t" + \
+                          self.connected_receivers[i][0] + \
+                          "\r\t" + str(self.connected_receivers[i][1]) + \
+                          ":"
+            return string
 
 
 class MessageSender(threading.Thread):
     def __init__(self, send_queue):
         threading.Thread.__init__(self)
         self.send_queue = send_queue
-        self.send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.continue_running = False
 
     def run(self):
         self.continue_running = True
 
         while self.continue_running:
+
             if self.send_queue.qsize() > 0:
+                send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 data = self.send_queue.get()
                 addr = data[0]
                 bytes = data[1]
-                print "Sending to : " + str(addr) + " " + str(bytes)
                 partitions = wrap(bytes, 1024)
-                print partitions
 
-                self.send_socket.connect(addr)
+                send_socket.connect(addr)
                 for i in partitions[0:len(partitions)-1]:
                     self.send_socket.send("1" + i)
-                self.send_socket.send("0"+partitions[len(partitions)-1])
-                self.send_socket.recv(1)
-                self.send_socket.close()
+                send_socket.send("0"+partitions[len(partitions)-1])
+                send_socket.recv(1)
+                send_socket.close()
             else:
                 threading._sleep(.1)
 
@@ -128,9 +116,7 @@ class MessageReceiver(threading.Thread):
 
         while self.continue_running:
             try:
-                print "Accepting..."
                 conn, addr = self.receive_socket.accept()
-                print conn
                 still_sending = True
 
                 data = ""
@@ -186,6 +172,14 @@ class Relay:
                     ip, port_string = string.split(":")
                     self.send_queue.put(((ip, int(port_string)), str(self.mapping)))
 
+                if char == 'p':
+                    pass
+
+                if char == 'c':
+                    pass
+
+
+
             else:
                 threading._sleep(.2) # Sleep for .2 seconds if no activity
 
@@ -194,10 +188,16 @@ class Receiver:
     def __init__(self, ip, port):
         self.receive_queue = Queue.Queue()
         self.receiver = MessageReceiver(ip, port, self.receive_queue)
+
         self.continue_listening = False
+
+        self.receiver.start()
 
     def run(self):
         self.continue_listening = True
+        input = raw_input("[ip,port] of relay: ")
+        ip, port_string = input.split(":")
+        self.connect(ip, int(port_string))
 
         while self.continue_listening:
 
@@ -253,14 +253,18 @@ class Transmitter:
                 ip, port_string = string.split(':')
                 self.send_ip = ip
                 self.send_port = int(port_string)
+                self.send_queue.put(((self.send_ip, self.send_port), 'c'))
 
             if user_input == "v":
                 self.send_queue.put(((self.send_ip, self.send_port), "v" + self.receive_ip + ":" + str(self.receive_port)))
 
                 while self.receiver_queue.qsize() == 0:
                     pass
-
-                print self.receiver_queue.get()
+                print "\n"
+                message = str(self.receiver_queue.get()[1])  # Print the data obtained from receiver
+                splitstr = message.split(":")
+                for i in splitstr:
+                    print i
 
             if user_input == "f":
                 filename = raw_input("Enter filename: ")
@@ -269,6 +273,11 @@ class Transmitter:
             if user_input == 'm':
                 string = raw_input("Enter message: ")
                 self.send_message(string)
+
+            if user_input == 'p':
+                number = raw_input("Enter connection number to push")
+                self.send_queue.put(((self.send_ip, self.send_port), int(number)))
+
 
     def send_file(self, filename):
         with open(filename, 'rb') as f:
@@ -296,39 +305,39 @@ def print_help_menu():
 
 
 if __name__ == '__main__':
-    # min_arg_length = 2
-    #
-    # if sys.argv[1] == "--receive":
-    #     if len(sys.argv) < 4:
-    #         print_help_menu()
-    #     else:
-    #         receive = Receiver(sys.argv[2], int(sys.argv[3]))
-    #         receive.run()
-    #
-    # elif sys.argv[1] == "--transmit":
-    #     if len(sys.argv) < 4:
-    #         print_help_menu()
-    #     else:
-    #         transmit = Transmitter(sys.argv[2], int(sys.argv[3]))
-    #         transmit.run()
-    #
-    # elif sys.argv[1] == "--relay":
-    #     if len(sys.argv) < 4:
-    #         print_help_menu()
-    #     else:
-    #         relay = Relay(sys.argv[2], int(sys.argv[3]))
-    #         relay.run()
-    #
-    # else:
-    #     print_help_menu()
-    sq = Queue.Queue(0)
-    rq = Queue.Queue(0)
-    ms = MessageSender(sq)
-    mr = MessageReceiver("127.0.0.1", 19001, rq)
+    min_arg_length = 2
 
-    ms.start()
-    mr.start()
+    if sys.argv[1] == "--receive":
+        if len(sys.argv) < 4:
+            print_help_menu()
+        else:
+            receive = Receiver(sys.argv[2], int(sys.argv[3]))
+            receive.run()
 
-    sq.put((("127.0.0.1", 19001),"asdasdasdasdas"))
-    sq.put((("127.0.0.1", 19001),"dfsdifunhsdkfjhgsd"))
-    sq.put((("127.0.0.1", 19001),"dsfsdfsdfsdfsdfs"))
+    elif sys.argv[1] == "--transmit":
+        if len(sys.argv) < 4:
+            print_help_menu()
+        else:
+            transmit = Transmitter(sys.argv[2], int(sys.argv[3]))
+            transmit.run()
+
+    elif sys.argv[1] == "--relay":
+        if len(sys.argv) < 4:
+            print_help_menu()
+        else:
+            relay = Relay(sys.argv[2], int(sys.argv[3]))
+            relay.run()
+
+    else:
+        print_help_menu()
+    # sq = Queue.Queue(0)
+    # rq = Queue.Queue(0)
+    # ms = MessageSender(sq)
+    # mr = MessageReceiver("127.0.0.1", 19001, rq)
+    #
+    # ms.start()
+    # mr.start()
+    #
+    # sq.put((("127.0.0.1", 19001),"asdasdasdasdas"))
+    # sq.put((("127.0.0.1", 19001),"dfsdifunhsdkfjhgsd"))
+    # sq.put((("127.0.0.1", 19001),"dsfsdfsdfsdfsdfs"))
