@@ -4,67 +4,73 @@ import sys
 import threading
 from textwrap import wrap
 import time
+import uuid
 
 
 class DeviceMappingRelay:
     def __init__(self):
         self.connected_transmitters = {}
-        self.connected_receivers = []
+        self.connected_receivers = {}
 
-    def add_transmitter(self, host, port):
-        if host in self.connected_transmitters.keys():
-            if port in self.connected_transmitters[host].keys():
-                pass
-            else:
-                self.connected_transmitters[host][port] = []
+    def add_transmitter(self, id):
+        if id in self.connected_transmitters.keys():
+            pass
         else:
-            self.connected_transmitters[host] = {}
-            self.connected_transmitters[host][port] = {}
+            self.connected_transmitters[id] = []
 
-    def add_receiver(self, ip, port):
-        ind = self.get_receiver_index(ip, port)
-        if ind == -1:
-            self.connected_receivers.append((ip, port))
+    def add_receiver(self, id, host, port):
+        if id in self.connected_receivers.keys():
+            return False
+        else:
+            self.connected_receivers[id] = (host, port)
+            return True
+
+    def remove_receiver(self, id):
+        if id in self.connected_receivers.keys():
+            return False
+        else:
+            self.connected_receivers.pop(id)
+            return True
+
+    def remove_transmitter(self, id):
+        if id in self.connected_transmitters.keys():
+            self.connected_transmitters.pop(id, 0)
             return True
         else:
             return False
 
-    def remove_receiver(self, ip, port):
-        ind = self.get_receiver_index(ip, port)
-        if ind == -1:
-            return False
-        else:
-            del self.connected_receivers[ind]
+    def add_receiver_subscription(self, transmitter_id, receiver_id):
+        if receiver_id in self.connected_receivers.keys():
+            self.connected_transmitters[transmitter_id].append(receiver_id)
             return True
-
-    def add_receiver_subscription(self, host, port):
-        ind = self.get_receiver_index(host, port)
-        if ind == -1:
+        else:
             return False
-        else:
-            self.connected_transmitters[host][port].append(self.connected_receivers[ind])
-            return True
 
-    def remove_receiver_subscription(self, host, port, receiver_index):
-        if self.connected_receivers[receiver_index] in self.connected_transmitters[host][port]:
-            self.connected_receivers[host][port].remove(self.connected_receivers[receiver_index])
-
-    def get_receiver_index(self, ip, port):
-        if (ip, port) in self.connected_receivers:
-            return self.connected_receivers.index((ip, port))
+    def get_receiver_addrs_transmitter(self, transmitter_id):
+        if transmitter_id in self.connected_transmitters.keys():
+            return [self.connected_receivers[i] for i in self.connected_transmitters[transmitter_id]]
         else:
-            return -1
+            return []
+
+    def remove_receiver_subscription(self, transmitter_id, receiver_id):
+        if receiver_id in self.connected_transmitters[transmitter_id]:
+            self.connected_transmitters[transmitter_id].remove(receiver_id)
+
+    def get_id_by_index(self, index):
+        ids = self.connected_receivers.keys()
+        return ids[index]
 
     def __str__(self):
-        if len(self.connected_receivers) == 0:
+        if len(self.connected_receivers.keys()) == 0:
             return "Current receivers subscribed: None"
         else:
             string = "Current receivers subscribed...:"
-            for i in range(0, len(self.connected_receivers)):
-                string += str(i) + "\r\t" + \
-                          self.connected_receivers[i][0] + \
-                          "\r\t" + str(self.connected_receivers[i][1]) + \
-                          ":"
+            for i in enumerate(self.connected_receivers.keys()):
+                string += str(i[0]) + \
+                        "\t" + str(i[1]) + \
+                        "\t" + str(self.connected_receivers[i[1]]) + \
+                        ":"
+
             return string
 
 
@@ -78,7 +84,6 @@ class MessageSender(threading.Thread):
         self.continue_running = True
 
         while self.continue_running:
-
             if self.send_queue.qsize() > 0:
                 send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 data = self.send_queue.get()
@@ -141,47 +146,61 @@ class Relay:
 
         self.send_queue = Queue.Queue()
         self.sender = MessageSender(self.send_queue)
-        self.receive_queue = Queue.Queue()
-        self.receiver = MessageReceiver(ip, port, self.receive_queue)
+
+        self.receive_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.receive_socket.bind((ip, port))
 
         self.sender.start()
-        self.receiver.start()
 
         self.continue_running = False
 
     def run(self):
         self.continue_running = True
-
+        self.receive_socket.listen(5)
         while self.continue_running:
-            if self.receive_queue.qsize() > 0:
-                packet = self.receive_queue.get()
-                addr = packet[0]
-                data = packet[1]
+            conn, addr = self.receive_socket.accept()
+            print "Accepted from " + str(addr)
+            t = threading.Thread(target=self.handle_connection, args=(conn,addr))
+            t.start()
 
-                char = data[0]
+    def handle_connection(self, conn, addr):
+        still_sending = True
 
-                if char == 'E':
-                    self.mapping.add_receiver(addr[0], addr[1])
+        data = ""
+        while still_sending:
+            new_segment = conn.recv(1025)
+            data = data + new_segment[1:len(new_segment)]
+            if new_segment[0] == '0':
+                still_sending = False
 
-                if char == 'L':
-                    self.mapping.remove_receiver(addr[0], addr[1])
+        char = data[32]
 
-                if char == 'v':
-                    # Send the string of available hosts back to the transmitter
-                    string = data[1:len(data)]
-                    ip, port_string = string.split(":")
-                    self.send_queue.put(((ip, int(port_string)), str(self.mapping)))
+        print data
+        if char == 'E':
+            addr_string = data[33:len(data)]
+            ip, port_string = addr_string.split(":")
+            self.mapping.add_receiver(data[0:32], ip, int(port_string))
+            conn.send('E')
 
-                if char == 'p':
-                    pass
+        if char == 'L':
+            self.mapping.remove_receiver(data[0:32])
 
-                if char == 'c':
-                    pass
+        if char == 'v':
+            conn.send(str(self.mapping))
 
+        if char == 'p':
+            id = data[0:32]
+            index = int(data[33:len(data)])
+            self.mapping.add_receiver_subscription(id, self.mapping.get_id_by_index(index))
 
+        if char == 'c':
+            conn.send('c')
+            conn.close()
 
-            else:
-                threading._sleep(.2) # Sleep for .2 seconds if no activity
+        if char == 'm':
+            to_send = data[33:len(data)]
+            for i in self.mapping.get_receiver_addrs_transmitter(data[0:32]):
+                self.send_queue.put((i, to_send))
 
 
 class Receiver:
@@ -189,9 +208,13 @@ class Receiver:
         self.receive_queue = Queue.Queue()
         self.receiver = MessageReceiver(ip, port, self.receive_queue)
 
+        self.ip = ip
+        self.port = port
+
         self.continue_listening = False
 
         self.receiver.start()
+        self.id = uuid.uuid1()
 
     def run(self):
         self.continue_listening = True
@@ -218,28 +241,19 @@ class Receiver:
     def connect(self, ip, port):
         connection_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         connection_socket.connect((ip, port))
-        connection_socket.send("0E")
+        connection_socket.send("0" + str(self.id.get_hex()) + 'E' + self.ip + ":" + str(self.port))
         connection_socket.recv(1)
         connection_socket.close()
+        print "Connected"
 
 
 class Transmitter:
     def __init__(self, ip, port):
-        self.send_queue = Queue.Queue()
-        self.receiver_queue = Queue.Queue()
-
-        self.sender = MessageSender(self.send_queue)
-
-        self.receive_ip = ip
-        self.receive_port = port
-
-        self.receiver = MessageReceiver(ip, port, self.receiver_queue)
-        self.receiver.start()
-        self.sender.start()
         self.continue_running = False
 
         self.send_ip = None
         self.send_port = None
+        self.id = uuid.uuid1()
 
     def run(self):
         self.continue_running = True
@@ -253,42 +267,50 @@ class Transmitter:
                 ip, port_string = string.split(':')
                 self.send_ip = ip
                 self.send_port = int(port_string)
-                self.send_queue.put(((self.send_ip, self.send_port), 'c'))
+                data = str(self.id.get_hex()) + 'c'
 
             if user_input == "v":
-                self.send_queue.put(((self.send_ip, self.send_port), "v" + self.receive_ip + ":" + str(self.receive_port)))
+                data = str(self.id.get_hex()) + 'v'
 
-                while self.receiver_queue.qsize() == 0:
-                    pass
-                print "\n"
-                message = str(self.receiver_queue.get()[1])  # Print the data obtained from receiver
+            if user_input == "f":
+                filename = raw_input("Enter filename: ")
+                data = str(self.id.get_hex()) + self.get_file_string(filename)
+
+            if user_input == 'm':
+                message = raw_input("Enter message: ")
+                data = str(self.id.get_hex()) + 'm' + message
+
+            if user_input == 'p':
+                number = raw_input("Enter connection number to push")
+                data = str(self.id.get_hex()) + 'p' + str(number)
+
+            # Send the message
+            send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            partitions = wrap(data, 1024)
+            send_socket.connect((self.send_ip, self.send_port))
+            for i in partitions[0:len(partitions) - 1]:
+                send_socket.send("1" + i)
+            send_socket.send("0" + partitions[len(partitions) - 1])
+
+            if user_input == 'v':
+                message = send_socket.recv(2048)
+                send_socket.close()
                 splitstr = message.split(":")
                 for i in splitstr:
                     print i
 
-            if user_input == "f":
-                filename = raw_input("Enter filename: ")
-                self.send_file(filename)
+            if user_input[0] == "c":
+                send_socket.recv(1)
+                send_socket.close()
 
-            if user_input == 'm':
-                string = raw_input("Enter message: ")
-                self.send_message(string)
-
-            if user_input == 'p':
-                number = raw_input("Enter connection number to push")
-                self.send_queue.put(((self.send_ip, self.send_port), int(number)))
-
-
-    def send_file(self, filename):
+    def get_file_string(self, filename):
         with open(filename, 'rb') as f:
             string = f.read()
             if len(str(len(filename))) != 2:
-                self.send_queue.put('f0' + str(len(filename)) + filename + string)
+                file_string = 'f0' + str(len(filename)) + filename + string
             else:
-                self.send_queue.put('f' + str(len(filename)) + filename + string)
-
-    def send_message(self, message):
-        self.send_queue.put('m' + message)
+                file_string = 'f' + str(len(filename)) + filename + string
+        return file_string
 
     def print_menu(self):
         print "Enter: "
@@ -341,3 +363,7 @@ if __name__ == '__main__':
     # sq.put((("127.0.0.1", 19001),"asdasdasdasdas"))
     # sq.put((("127.0.0.1", 19001),"dfsdifunhsdkfjhgsd"))
     # sq.put((("127.0.0.1", 19001),"dsfsdfsdfsdfsdfs"))
+
+
+    for i in enumerate(d):
+        print i
