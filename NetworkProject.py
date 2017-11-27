@@ -334,6 +334,7 @@ class Transmitter:
     def print_menu(self):
         print "Enter: "
         print "\tConnect:\t\tc [IP:port]"
+        print "\tView receivers:\t\tv"
         print "\tPush Connection:\tp [connection number]"
         print "\tRemove Connection:\tr [connection number]"
         print "\tTransmit Message:\tm [message]"
@@ -345,6 +346,7 @@ def print_help_menu():
     print "Help Menu"
     print "\t--receive [host] [port]"
     print "\t--relay [host] [port]"
+    print "\t--transmit [host] [port]"
 
 
 if __name__ == '__main__':
