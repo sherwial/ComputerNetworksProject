@@ -90,7 +90,6 @@ class MessageSender(threading.Thread):
                 addr = data[0]
                 bytes = data[1]
                 partitions = wrap(bytes, 1024)
-
                 send_socket.connect(addr)
                 for i in partitions[0:len(partitions)-1]:
                     self.send_socket.send("1" + i)
@@ -194,13 +193,27 @@ class Relay:
             self.mapping.add_receiver_subscription(id, self.mapping.get_id_by_index(index))
 
         if char == 'c':
+            id = data[0:32]
+            self.mapping.add_transmitter(id)
             conn.send('c')
             conn.close()
 
         if char == 'm':
-            to_send = data[33:len(data)]
-            for i in self.mapping.get_receiver_addrs_transmitter(data[0:32]):
+            id = data[0:32]
+            to_send = data[32:len(data)]
+            for i in self.mapping.get_receiver_addrs_transmitter(id):
+                self.send_queue.put((i, id + to_send))
+
+        if char == 'f':
+            id = data[0:32]
+            to_send = data
+            for i in self.mapping.get_receiver_addrs_transmitter(id):
                 self.send_queue.put((i, to_send))
+
+        if char == 'r':
+            id = data[0:32]
+            index = int(data[33:len(data)])
+            self.mapping.remove_receiver_subscription(id, self.mapping.get_id_by_index(index))
 
 
 class Receiver:
@@ -229,14 +242,19 @@ class Receiver:
                 addr = packet[0]
                 data = packet[1]
 
-                if data[0] == 'f':
-                    title_length = int(data[1:3])
-                    with open(data[3:title_length+3]) as f:
-                        f.write(data[title_length+3:len(data)])
+                print data
 
-                if packet[0] == 'm':
-                    print "From: " + str(addr)
-                    print "\t" + str(data[1:len(data)])
+                if data[32] == 'f':
+                    print "Received f"
+                    title_length = int(data[33:35])
+                    print title_length
+                    with open(data[35:35+title_length], 'wb') as f:
+                        f.write(data[35+title_length:len(data)])
+
+                if data[32] == 'm':
+                    id = data[0:32]
+                    print "From: " + id
+                    print "\t" + str(data[33:len(data)])
 
     def connect(self, ip, port):
         connection_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -272,17 +290,18 @@ class Transmitter:
             if user_input == "v":
                 data = str(self.id.get_hex()) + 'v'
 
-            if user_input == "f":
-                filename = raw_input("Enter filename: ")
-                data = str(self.id.get_hex()) + self.get_file_string(filename)
+            if user_input[0] == "f":
+                data = str(self.id.get_hex()) + self.get_file_string(user_input[2:len(user_input)])
 
-            if user_input == 'm':
-                message = raw_input("Enter message: ")
-                data = str(self.id.get_hex()) + 'm' + message
+            if user_input[0] == 'm':
+                data = str(self.id.get_hex()) + 'm' + user_input[2:len(user_input)]
 
-            if user_input == 'p':
-                number = raw_input("Enter connection number to push")
-                data = str(self.id.get_hex()) + 'p' + str(number)
+            if user_input[0] == 'p':
+                data = str(self.id.get_hex()) + 'p' + user_input[2:len(user_input)]
+
+            if user_input[0] == 'r':
+                data = str(self.id.get_hex()) + 'r' + user_input[2:len(user_input)]
+
 
             # Send the message
             send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -314,10 +333,12 @@ class Transmitter:
 
     def print_menu(self):
         print "Enter: "
-        print "\tConnect: c [IP:port]"
-        print "\tPush Connection: p"
-        print "\tTransmit Message: [message]"
-        print "\tTransmit File: [filename]"
+        print "\tConnect:\t\tc [IP:port]"
+        print "\tPush Connection:\tp [connection number]"
+        print "\tRemove Connection:\tr [connection number]"
+        print "\tTransmit Message:\tm [message]"
+        print "\tTransmit File:\t\tf [filename]"
+        print "\tQuit:\t\t\tq"
 
 
 def print_help_menu():
@@ -352,18 +373,6 @@ if __name__ == '__main__':
 
     else:
         print_help_menu()
-    # sq = Queue.Queue(0)
-    # rq = Queue.Queue(0)
-    # ms = MessageSender(sq)
-    # mr = MessageReceiver("127.0.0.1", 19001, rq)
-    #
-    # ms.start()
-    # mr.start()
-    #
-    # sq.put((("127.0.0.1", 19001),"asdasdasdasdas"))
-    # sq.put((("127.0.0.1", 19001),"dfsdifunhsdkfjhgsd"))
-    # sq.put((("127.0.0.1", 19001),"dsfsdfsdfsdfsdfs"))
-
 
     for i in enumerate(d):
         print i
